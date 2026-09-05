@@ -1,7 +1,12 @@
 import sys
 import os
 import re
+import time
 import requests
+
+DELAY_BETWEEN_FILES = 30   # seconds to wait between downloads (adjust as needed)
+MAX_RETRIES = 3
+RETRY_WAIT = 60            # seconds to wait before retrying a failed download
 
 def login(email, password):
     resp = requests.post(
@@ -14,7 +19,6 @@ def login(email, password):
     return data["response"]["token"]
 
 def extract_file_id(link):
-    # Rapidgator links look like: https://rapidgator.net/file/<file_id>/name.html
     match = re.search(r"rapidgator\.net/file/([a-zA-Z0-9]+)", link)
     if not match:
         raise Exception(f"Couldn't find a file ID in this link: {link}")
@@ -27,7 +31,7 @@ def get_download_link(token, file_id):
     )
     data = resp.json()
     if data.get("status") != 200:
-        raise Exception(f"Could not get download link: {data.get('details', data)}")
+        raise Exception(data.get("details", str(data)))
     return data["response"]["download_url"]
 
 def download_file(download_url, dest_folder):
@@ -48,28 +52,48 @@ def download_file(download_url, dest_folder):
                     downloaded += len(chunk)
                     if total:
                         pct = downloaded * 100 // total
-                        print(f"\rDownloading: {pct}%", end="")
+                        print(f"\r{filename}: {pct}%", end="")
         print()
     return dest_path
 
+def download_one(token, link, dest_folder):
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            file_id = extract_file_id(link)
+            download_url = get_download_link(token, file_id)
+            path = download_file(download_url, dest_folder)
+            print(f"Saved: {path}")
+            return True
+        except Exception as e:
+            print(f"Attempt {attempt} failed for {link}: {e}")
+            if attempt < MAX_RETRIES:
+                print(f"Waiting {RETRY_WAIT}s before retrying...")
+                time.sleep(RETRY_WAIT)
+    print(f"Giving up on {link} after {MAX_RETRIES} attempts.")
+    return False
+
 def main():
     if len(sys.argv) != 5:
-        print("Usage: python rgcolab.py <email> <password> <rapidgator_link> <destination_folder>")
+        print("Usage: python rgcolab.py <email> <password> <links_file> <destination_folder>")
         sys.exit(1)
 
-    email, password, link, dest_folder = sys.argv[1:5]
+    email, password, links_file, dest_folder = sys.argv[1:5]
 
+    with open(links_file) as f:
+        links = [line.strip() for line in f if line.strip()]
+
+    print(f"Found {len(links)} link(s) to download.")
     print("Logging in to Rapidgator...")
     token = login(email, password)
 
-    file_id = extract_file_id(link)
+    for i, link in enumerate(links, start=1):
+        print(f"\n[{i}/{len(links)}] {link}")
+        download_one(token, link, dest_folder)
+        if i < len(links):
+            print(f"Waiting {DELAY_BETWEEN_FILES}s before the next file...")
+            time.sleep(DELAY_BETWEEN_FILES)
 
-    print("Requesting download link...")
-    download_url = get_download_link(token, file_id)
-
-    print("Downloading...")
-    path = download_file(download_url, dest_folder)
-    print(f"Done! Saved to {path}")
+    print("\nAll done!")
 
 if __name__ == "__main__":
     main()
