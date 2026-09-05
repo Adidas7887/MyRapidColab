@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import requests
 
 def login(email, password):
@@ -12,15 +13,12 @@ def login(email, password):
         raise Exception(f"Login failed: {data.get('details', data)}")
     return data["response"]["token"]
 
-def get_file_info(token, url):
-    resp = requests.get(
-        "https://rapidgator.net/api/v2/file/info",
-        params={"token": token, "url": url}
-    )
-    data = resp.json()
-    if data.get("status") != 200:
-        raise Exception(f"Could not get file info: {data.get('details', data)}")
-    return data["response"]["file"]
+def extract_file_id(link):
+    # Rapidgator links look like: https://rapidgator.net/file/<file_id>/name.html
+    match = re.search(r"rapidgator\.net/file/([a-zA-Z0-9]+)", link)
+    if not match:
+        raise Exception(f"Couldn't find a file ID in this link: {link}")
+    return match.group(1)
 
 def get_download_link(token, file_id):
     resp = requests.get(
@@ -32,11 +30,15 @@ def get_download_link(token, file_id):
         raise Exception(f"Could not get download link: {data.get('details', data)}")
     return data["response"]["download_url"]
 
-def download_file(download_url, dest_folder, filename):
+def download_file(download_url, dest_folder):
     os.makedirs(dest_folder, exist_ok=True)
-    dest_path = os.path.join(dest_folder, filename)
     with requests.get(download_url, stream=True) as r:
         r.raise_for_status()
+        cd = r.headers.get("content-disposition", "")
+        match = re.search(r'filename="?([^"]+)"?', cd)
+        filename = match.group(1) if match else "downloaded_file"
+        dest_path = os.path.join(dest_folder, filename)
+
         total = int(r.headers.get("content-length", 0))
         downloaded = 0
         with open(dest_path, "wb") as f:
@@ -46,7 +48,7 @@ def download_file(download_url, dest_folder, filename):
                     downloaded += len(chunk)
                     if total:
                         pct = downloaded * 100 // total
-                        print(f"\rDownloading {filename}: {pct}%", end="")
+                        print(f"\rDownloading: {pct}%", end="")
         print()
     return dest_path
 
@@ -60,17 +62,13 @@ def main():
     print("Logging in to Rapidgator...")
     token = login(email, password)
 
-    print("Fetching file info...")
-    file_info = get_file_info(token, link)
-    file_id = file_info["file_id"]
-    filename = file_info["name"]
+    file_id = extract_file_id(link)
 
-    print(f"Found file: {filename}")
     print("Requesting download link...")
     download_url = get_download_link(token, file_id)
 
     print("Downloading...")
-    path = download_file(download_url, dest_folder, filename)
+    path = download_file(download_url, dest_folder)
     print(f"Done! Saved to {path}")
 
 if __name__ == "__main__":
