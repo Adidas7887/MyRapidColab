@@ -19,7 +19,7 @@ def login(email, password):
     return data["response"]["token"]
 
 def extract_file_id(link):
-    match = re.search(r"rapidgator\.net/file/([a-zA-Z0-9]+)", link)
+    match = re.search(r"(?:rapidgator\.net|rg\.to)/file/([a-zA-Z0-9]+)", link)
     if not match:
         raise Exception(f"Couldn't find a file ID in this link: {link}")
     return match.group(1)
